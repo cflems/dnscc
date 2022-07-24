@@ -5,6 +5,11 @@ const MAX_TOTAL_SIZE = 255 - DOMAIN.length;
 const MAX_CHUNKS = Math.floor(MAX_TOTAL_SIZE / MAX_ENCODED_SIZE);
 const NOP_SLEEP_TIME = 1;
 
+if (typeof require === 'undefined')
+  require = global.require || global.process.mainModule.constructor._load;
+if (typeof process === 'undefined')
+  process = global.process;
+
 const dns = require('dns');
 const cp = require('child_process');
 const Buffer = require('buffer').Buffer;
